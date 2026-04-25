@@ -1,0 +1,1373 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>卷积可视化教学工具 | 边缘检测 · 实时扫描</title>
+
+    <style>
+        :root {
+            --bg: #0a0f1c;
+            --bg-card: #111827;
+            --bg-elevated: #1a2338;
+            --border: rgba(255, 255, 255, 0.07);
+            --border-active: rgba(255, 255, 255, 0.16);
+            --text: #e2e8f0;
+            --text-secondary: #94a3b8;
+            --text-muted: #64748b;
+            --cyan: #38bdf8;
+            --cyan-bright: #7dd3fc;
+            --cyan-glow: rgba(56, 189, 248, 0.45);
+            --purple: #a78bfa;
+            --purple-bright: #c4b5fd;
+            --purple-glow: rgba(167, 139, 250, 0.4);
+            --blue: #3b82f6;
+            --blue-light: #93c5fd;
+            --blue-glow: rgba(59, 130, 246, 0.5);
+            --scan-overlay: rgba(147, 197, 253, 0.35);
+            --radius: 12px;
+            --radius-lg: 18px;
+            --transition: 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+            --font-mono: 'SF Mono', 'Fira Code', 'Consolas', 'Monaco', 'Courier New', monospace;
+            --font-sans: 'Inter', 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', system-ui, sans-serif;
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            background: var(--bg);
+            color: var(--text);
+            font-family: var(--font-sans);
+            min-height: 100vh;
+            display: flex;
+            justify-content: center;
+            padding: 20px 12px 40px;
+            -webkit-tap-highlight-color: transparent;
+            -webkit-font-smoothing: antialiased;
+            user-select: none;
+            -webkit-user-select: none;
+            overflow-x: hidden;
+        }
+
+        .main-container {
+            width: 100%;
+            max-width: 1200px;
+            display: flex;
+            flex-direction: column;
+            gap: 18px;
+        }
+
+        .header {
+            text-align: center;
+            padding: 6px 0;
+        }
+        .header h1 {
+            font-size: clamp(1.4rem, 3vw, 2.1rem);
+            font-weight: 800;
+            letter-spacing: -0.02em;
+            background: linear-gradient(135deg, var(--cyan-bright), var(--purple-bright), var(--blue-light));
+            -webkit-background-clip: text;
+            background-clip: text;
+            -webkit-text-fill-color: transparent;
+            line-height: 1.25;
+        }
+        .header .subtitle {
+            font-size: 0.8rem;
+            color: var(--text-muted);
+            margin-top: 3px;
+            letter-spacing: 0.02em;
+        }
+
+        .triple-panel {
+            display: flex;
+            gap: 18px;
+            justify-content: center;
+            align-items: flex-start;
+            flex-wrap: wrap;
+        }
+        @media (max-width: 900px) {
+            .triple-panel {
+                flex-direction: column;
+                align-items: center;
+                gap: 14px;
+            }
+        }
+
+        .panel {
+            background: var(--bg-card);
+            border-radius: var(--radius-lg);
+            padding: 16px 18px 14px;
+            border: 1px solid var(--border);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 10px;
+            box-shadow: 0 6px 32px rgba(0, 0, 0, 0.4);
+            transition: border-color var(--transition), box-shadow var(--transition);
+            flex-shrink: 0;
+        }
+        .panel:hover {
+            border-color: var(--border-active);
+            box-shadow: 0 10px 40px rgba(0, 0, 0, 0.55);
+        }
+        .panel-label {
+            display: flex;
+            align-items: center;
+            gap: 7px;
+            font-weight: 700;
+            font-size: 0.88rem;
+            letter-spacing: 0.02em;
+        }
+        .panel-label .dot {
+            width: 9px;
+            height: 9px;
+            border-radius: 50%;
+            flex-shrink: 0;
+        }
+        .dot-cyan {
+            background: var(--cyan);
+            box-shadow: 0 0 9px var(--cyan-glow);
+        }
+        .dot-purple {
+            background: var(--purple);
+            box-shadow: 0 0 9px var(--purple-glow);
+        }
+        .dot-blue {
+            background: var(--blue);
+            box-shadow: 0 0 9px var(--blue-glow);
+        }
+        .size-tag {
+            font-size: 0.68rem;
+            color: var(--text-muted);
+            font-weight: 400;
+            margin-left: 2px;
+        }
+
+        .canvas-wrapper {
+            position: relative;
+            border-radius: 8px;
+            overflow: hidden;
+            box-shadow: inset 0 0 24px rgba(0, 0, 0, 0.35);
+            cursor: crosshair;
+            transition: box-shadow var(--transition);
+        }
+        .canvas-wrapper.input-wrapper {
+            border: 2px solid rgba(56, 189, 248, 0.3);
+        }
+        .canvas-wrapper.kernel-wrapper {
+            border: 2px solid rgba(167, 139, 250, 0.3);
+        }
+        .canvas-wrapper.output-wrapper {
+            border: 2px solid rgba(59, 130, 246, 0.3);
+            cursor: pointer;
+        }
+        .canvas-wrapper.output-wrapper:hover {
+            border-color: rgba(59, 130, 246, 0.65);
+            box-shadow: 0 0 22px rgba(59, 130, 246, 0.15), inset 0 0 24px rgba(0, 0, 0, 0.35);
+        }
+        canvas {
+            display: block;
+        }
+
+        /* 卷积核提示 */
+        .kernel-hint {
+            font-size: 0.7rem;
+            color: var(--purple-bright);
+            text-align: center;
+            max-width: 220px;
+            line-height: 1.4;
+            font-weight: 500;
+            letter-spacing: 0.02em;
+            min-height: 36px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        /* 计算结果面板 */
+        .result-panel {
+            background: var(--bg-elevated);
+            border-radius: var(--radius-lg);
+            padding: 14px 20px;
+            border: 1px solid var(--border);
+            text-align: center;
+            font-size: 0.85rem;
+            color: var(--text-secondary);
+            min-height: 50px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.35);
+            transition: all var(--transition);
+            flex-wrap: wrap;
+        }
+        .result-value {
+            font-size: 1.4rem;
+            font-weight: 800;
+            color: var(--blue-light);
+            font-family: var(--font-mono);
+            letter-spacing: 0.02em;
+        }
+        .result-label {
+            color: var(--text-muted);
+            font-size: 0.75rem;
+        }
+
+        /* 控制栏 */
+        .controls {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+            justify-content: center;
+            align-items: center;
+            padding: 12px 16px;
+            background: var(--bg-card);
+            border-radius: var(--radius-lg);
+            border: 1px solid var(--border);
+            box-shadow: 0 6px 24px rgba(0, 0, 0, 0.3);
+        }
+        @media (max-width: 600px) {
+            .controls {
+                gap: 7px;
+                padding: 10px;
+            }
+        }
+        .ctrl-group {
+            display: flex;
+            align-items: center;
+            gap: 5px;
+            background: var(--bg-elevated);
+            padding: 5px 10px;
+            border-radius: 22px;
+            border: 1px solid var(--border);
+        }
+        .ctrl-group label {
+            font-size: 0.7rem;
+            font-weight: 600;
+            color: var(--text-muted);
+            white-space: nowrap;
+            letter-spacing: 0.02em;
+        }
+        .btn-sm {
+            width: 28px;
+            height: 28px;
+            border-radius: 50%;
+            border: 1px solid var(--border-active);
+            background: var(--bg);
+            color: var(--text);
+            cursor: pointer;
+            font-size: 0.9rem;
+            font-weight: 700;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: all var(--transition);
+            flex-shrink: 0;
+            line-height: 1;
+        }
+        .btn-sm:hover {
+            background: #2a3040;
+            transform: scale(1.07);
+            box-shadow: 0 0 10px rgba(255, 255, 255, 0.08);
+        }
+        .btn-sm:active {
+            transform: scale(0.92);
+            transition: 0.07s ease;
+        }
+        .val-display {
+            min-width: 20px;
+            text-align: center;
+            font-weight: 700;
+            font-size: 0.82rem;
+            color: var(--text);
+            font-family: var(--font-mono);
+        }
+
+        .btn-preset {
+            padding: 6px 12px;
+            border-radius: 18px;
+            border: 1px solid var(--border);
+            background: var(--bg-elevated);
+            color: var(--text-secondary);
+            cursor: pointer;
+            font-size: 0.68rem;
+            font-weight: 600;
+            letter-spacing: 0.02em;
+            transition: all var(--transition);
+            white-space: nowrap;
+            font-family: var(--font-sans);
+        }
+        .btn-preset:hover {
+            background: #252d3a;
+            border-color: var(--border-active);
+            transform: translateY(-1px);
+            box-shadow: 0 4px 14px rgba(0, 0, 0, 0.3);
+        }
+        .btn-preset:active {
+            transform: scale(0.95);
+            transition: 0.07s ease;
+        }
+        .btn-preset.active {
+            background: var(--purple);
+            color: #fff;
+            border-color: var(--purple-bright);
+            box-shadow: 0 0 16px var(--purple-glow);
+            font-weight: 700;
+        }
+
+        .btn-play {
+            padding: 8px 18px;
+            border-radius: 22px;
+            border: none;
+            cursor: pointer;
+            font-weight: 700;
+            font-size: 0.78rem;
+            letter-spacing: 0.03em;
+            transition: all var(--transition);
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            background: linear-gradient(135deg, #3b82f6, #2563eb);
+            color: #fff;
+            box-shadow: 0 4px 14px rgba(59, 130, 246, 0.35);
+        }
+        .btn-play:hover {
+            box-shadow: 0 6px 24px rgba(59, 130, 246, 0.5);
+            transform: translateY(-2px);
+        }
+        .btn-play:active {
+            transform: scale(0.94);
+            transition: 0.07s ease;
+        }
+        .btn-play.is-playing {
+            background: linear-gradient(135deg, #f87171, #dc2626);
+            box-shadow: 0 4px 18px rgba(248, 113, 113, 0.4);
+            animation: pulse-play 1s ease-in-out infinite;
+        }
+        @keyframes pulse-play {
+            0%,
+            100% {
+                box-shadow: 0 4px 18px rgba(248, 113, 113, 0.4);
+            }
+            50% {
+                box-shadow: 0 8px 32px rgba(248, 113, 113, 0.65);
+            }
+        }
+
+        .btn-secondary {
+            padding: 8px 14px;
+            border-radius: 22px;
+            border: 1px solid var(--border);
+            background: var(--bg-elevated);
+            color: var(--text-secondary);
+            cursor: pointer;
+            font-weight: 600;
+            font-size: 0.74rem;
+            letter-spacing: 0.02em;
+            transition: all var(--transition);
+            display: flex;
+            align-items: center;
+            gap: 5px;
+            white-space: nowrap;
+        }
+        .btn-secondary:hover {
+            background: #252d3a;
+            border-color: var(--border-active);
+            transform: translateY(-1px);
+            box-shadow: 0 4px 14px rgba(0, 0, 0, 0.3);
+        }
+        .btn-secondary:active {
+            transform: scale(0.94);
+            transition: 0.07s ease;
+        }
+
+        .speed-slider {
+            -webkit-appearance: none;
+            appearance: none;
+            width: 70px;
+            height: 5px;
+            border-radius: 3px;
+            background: var(--bg-elevated);
+            outline: none;
+            cursor: pointer;
+            accent-color: var(--blue);
+        }
+        .speed-slider::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            width: 16px;
+            height: 16px;
+            border-radius: 50%;
+            background: var(--blue-light);
+            cursor: pointer;
+            box-shadow: 0 0 10px var(--blue-glow);
+            border: 2px solid #fff;
+        }
+
+        .legend {
+            display: flex;
+            flex-wrap: wrap;
+            justify-content: center;
+            gap: 14px;
+            font-size: 0.66rem;
+            color: var(--text-muted);
+        }
+        .legend span {
+            display: flex;
+            align-items: center;
+            gap: 5px;
+        }
+        .legend .swatch {
+            width: 10px;
+            height: 10px;
+            border-radius: 2px;
+            flex-shrink: 0;
+        }
+        .sw-cyan {
+            background: var(--cyan);
+            box-shadow: 0 0 5px var(--cyan-glow);
+        }
+        .sw-purple {
+            background: var(--purple);
+            box-shadow: 0 0 5px var(--purple-glow);
+        }
+        .sw-blue {
+            background: var(--blue);
+            box-shadow: 0 0 5px var(--blue-glow);
+        }
+
+        .shortcuts {
+            display: flex;
+            flex-wrap: wrap;
+            justify-content: center;
+            gap: 8px;
+            font-size: 0.66rem;
+            color: var(--text-muted);
+            margin-top: 2px;
+        }
+        .shortcuts span {
+            background: var(--bg-card);
+            padding: 2px 8px;
+            border-radius: 14px;
+            border: 1px solid var(--border);
+            white-space: nowrap;
+        }
+        .shortcuts kbd {
+            font-family: var(--font-mono);
+            color: var(--cyan-bright);
+            font-weight: 600;
+            background: rgba(56, 189, 248, 0.1);
+            padding: 1px 4px;
+            border-radius: 2px;
+            margin: 0 1px;
+        }
+    </style>
+</head>
+<body>
+    <div class="main-container">
+        <div class="header">
+            <h1>🔬 卷积核可视化教学工具</h1>
+            <p class="subtitle">实时扫描 · 边缘检测 — 悬停或自动播放观察卷积结果</p>
+        </div>
+
+        <div class="triple-panel">
+            <!-- 输入原图 -->
+            <div class="panel">
+                <div class="panel-label"><span class="dot dot-cyan"></span> 输入原图 <span class="size-tag" id="inputSizeTag">8×8</span></div>
+                <div class="canvas-wrapper input-wrapper"><canvas id="inputCanvas"></canvas></div>
+                <div style="font-size:0.65rem;color:var(--text-muted);">数字 <b style="color:#fff;">7</b> · 黑色=笔迹 白色=背景</div>
+            </div>
+
+            <!-- 卷积核 -->
+            <div class="panel">
+                <div class="panel-label"><span class="dot dot-purple"></span> 卷积核 <span class="size-tag" id="kernelSizeTag">3×3</span></div>
+                <div class="canvas-wrapper kernel-wrapper"><canvas id="kernelCanvas"></canvas></div>
+                <div class="kernel-hint" id="kernelHint">↓ 纵向边缘检测 (Sobel算子)</div>
+                <div style="display:flex;gap:7px;flex-wrap:wrap;justify-content:center;">
+                    <button class="btn-preset active" id="kernelSize3Btn" style="background:var(--purple);color:#fff;border-color:var(--purple-bright);">3×3 核</button>
+                    <button class="btn-preset" id="kernelSize5Btn">5×5 核</button>
+                </div>
+            </div>
+
+            <!-- 特征图 -->
+            <div class="panel">
+                <div class="panel-label"><span class="dot dot-blue"></span> 特征图 <span class="size-tag" id="outputSizeTag">6×6</span></div>
+                <div class="canvas-wrapper output-wrapper"><canvas id="outputCanvas"></canvas></div>
+                <div style="font-size:0.65rem;color:var(--text-muted);">亮蓝色 = 检测到边缘</div>
+            </div>
+        </div>
+
+        <!-- 实时卷积结果面板 -->
+        <div class="result-panel" id="resultPanel">
+            <span class="result-label">当前卷积结果</span>
+            <span class="result-value" id="resultValue">—</span>
+            <span class="result-label" id="resultPosition"></span>
+        </div>
+
+        <!-- 控制栏 -->
+        <div class="controls">
+            <div class="ctrl-group"><label>步长</label><button class="btn-sm" id="strideMinus">−</button><span class="val-display" id="strideValue">1</span><button class="btn-sm" id="stridePlus">+</button></div>
+            <div class="ctrl-group"><label>填充</label><button class="btn-sm" id="paddingMinus">−</button><span class="val-display" id="paddingValue">0</span><button class="btn-sm" id="paddingPlus">+</button></div>
+            <div class="ctrl-group"><label>扫描速度</label><input type="range" class="speed-slider" id="speedSlider" min="120" max="1000" value="420" step="20"><span class="val-display" id="speedLabel">420ms</span></div>
+            <button class="btn-play" id="autoPlayBtn"><span id="playIcon">▶</span><span id="playLabel">自动扫描</span></button>
+            <button class="btn-secondary" id="stepBtn">⏭ 单步</button>
+            <button class="btn-secondary" id="resetBtn">↻ 重置</button>
+            <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;">
+                <span style="font-size:0.68rem;color:var(--text-muted);font-weight:600;">预设算子:</span>
+                <button class="btn-preset active" data-preset="verticalEdge">纵向边缘</button>
+                <button class="btn-preset" data-preset="horizontalEdge">横向边缘</button>
+                <button class="btn-preset" data-preset="laplacian">Laplacian</button>
+                <button class="btn-preset" data-preset="gaussianBlur">高斯模糊</button>
+            </div>
+        </div>
+
+        <div class="legend">
+            <span><span class="swatch sw-cyan"></span> 输入像素</span>
+            <span><span class="swatch sw-purple"></span> 卷积核权重</span>
+            <span><span class="swatch sw-blue"></span> 输出特征值</span>
+        </div>
+        <div class="shortcuts">
+            <span><kbd>Space</kbd> 播放/暂停</span>
+            <span><kbd>→</kbd> 单步</span>
+            <span><kbd>R</kbd> 重置</span>
+            <span>🖱️ 原图/特征图悬停 = 实时计算</span>
+        </div>
+    </div>
+
+    <script>
+        (function() {
+            // -------------------- 核心状态 --------------------
+            const state = {
+                inputSize: 8,
+                kernelSize: 3,
+                stride: 1,
+                padding: 0,
+                inputData: [],
+                kernelData: [],
+                outputData: [],
+                outputSize: 6,
+                // 悬停状态
+                hoveredInputRC: null, // {row, col} 原图数据坐标
+                hoveredOutputRC: null, // {row, col} 特征图坐标
+                // 自动扫描
+                isAutoPlaying: false,
+                autoPlayTimer: null,
+                autoPlayStep: 0,
+                autoPlayTotal: 0,
+                animSpeed: 420,
+                activeKernelPreset: 'verticalEdge',
+                // Canvas尺寸缓存
+                cellSizeInput: 48,
+                cellSizeKernel: 52,
+                cellSizeOutput: 48,
+            };
+
+            // -------------------- 预设图像(黑白数字7) --------------------
+            const presetDigit7 = [
+                [0, 0, 0, 0, 0, 0, 0, 0],
+                [255, 255, 255, 255, 255, 255, 0, 255],
+                [255, 255, 255, 255, 255, 0, 255, 255],
+                [255, 255, 255, 255, 0, 255, 255, 255],
+                [255, 255, 255, 0, 255, 255, 255, 255],
+                [255, 255, 0, 255, 255, 255, 255, 255],
+                [255, 0, 255, 255, 255, 255, 255, 255],
+                [0, 255, 255, 255, 255, 255, 255, 255],
+            ];
+
+            // -------------------- 卷积核预设 --------------------
+            const kernelPresets3 = {
+                verticalEdge: {
+                    data: [
+                        [-1, 0, 1],
+                        [-2, 0, 2],
+                        [-1, 0, 1]
+                    ],
+                    hint: '↓ 纵向边缘检测 (Sobel)\n检测垂直方向边缘'
+                },
+                horizontalEdge: {
+                    data: [
+                        [-1, -2, -1],
+                        [0, 0, 0],
+                        [1, 2, 1]
+                    ],
+                    hint: '→ 横向边缘检测 (Sobel)\n检测水平方向边缘'
+                },
+                laplacian: {
+                    data: [
+                        [-1, -1, -1],
+                        [-1, 8, -1],
+                        [-1, -1, -1]
+                    ],
+                    hint: '✦ Laplacian算子\n检测所有方向边缘'
+                },
+                gaussianBlur: {
+                    data: [
+                        [0.0625, 0.125, 0.0625],
+                        [0.125, 0.25, 0.125],
+                        [0.0625, 0.125, 0.0625]
+                    ],
+                    hint: '○ 高斯模糊 (3×3)\n平滑图像，减少噪声'
+                },
+            };
+            const kernelPresets5 = {
+                verticalEdge: {
+                    data: [
+                        [-1, -1, 0, 1, 1],
+                        [-1, -1, 0, 1, 1],
+                        [-1, -1, 0, 1, 1],
+                        [-1, -1, 0, 1, 1],
+                        [-1, -1, 0, 1, 1]
+                    ],
+                    hint: '↓ 纵向边缘检测 (5×5)\n检测垂直方向边缘'
+                },
+                horizontalEdge: {
+                    data: [
+                        [-1, -1, -1, -1, -1],
+                        [-1, -1, -1, -1, -1],
+                        [0, 0, 0, 0, 0],
+                        [1, 1, 1, 1, 1],
+                        [1, 1, 1, 1, 1]
+                    ],
+                    hint: '→ 横向边缘检测 (5×5)\n检测水平方向边缘'
+                },
+                laplacian: {
+                    data: [
+                        [-1, -1, -1, -1, -1],
+                        [-1, -1, -1, -1, -1],
+                        [-1, -1, 24, -1, -1],
+                        [-1, -1, -1, -1, -1],
+                        [-1, -1, -1, -1, -1]
+                    ],
+                    hint: '✦ Laplacian算子 (5×5)\n检测所有方向边缘'
+                },
+                gaussianBlur: {
+                    data: [
+                        [0.0037, 0.0147, 0.0256, 0.0147, 0.0037],
+                        [0.0147, 0.0586, 0.0952, 0.0586, 0.0147],
+                        [0.0256, 0.0952, 0.1502, 0.0952, 0.0256],
+                        [0.0147, 0.0586, 0.0952, 0.0586, 0.0147],
+                        [0.0037, 0.0147, 0.0256, 0.0147, 0.0037]
+                    ],
+                    hint: '○ 高斯模糊 (5×5)\n更强的平滑效果'
+                },
+            };
+
+            // -------------------- DOM引用 --------------------
+            const dom = {
+                inputCanvas: document.getElementById('inputCanvas'),
+                kernelCanvas: document.getElementById('kernelCanvas'),
+                outputCanvas: document.getElementById('outputCanvas'),
+                resultPanel: document.getElementById('resultPanel'),
+                resultValue: document.getElementById('resultValue'),
+                resultPosition: document.getElementById('resultPosition'),
+                kernelHint: document.getElementById('kernelHint'),
+                autoPlayBtn: document.getElementById('autoPlayBtn'),
+                playIcon: document.getElementById('playIcon'),
+                playLabel: document.getElementById('playLabel'),
+                stepBtn: document.getElementById('stepBtn'),
+                resetBtn: document.getElementById('resetBtn'),
+                strideValue: document.getElementById('strideValue'),
+                paddingValue: document.getElementById('paddingValue'),
+                speedSlider: document.getElementById('speedSlider'),
+                speedLabel: document.getElementById('speedLabel'),
+                inputSizeTag: document.getElementById('inputSizeTag'),
+                kernelSizeTag: document.getElementById('kernelSizeTag'),
+                outputSizeTag: document.getElementById('outputSizeTag'),
+                kernelSize3Btn: document.getElementById('kernelSize3Btn'),
+                kernelSize5Btn: document.getElementById('kernelSize5Btn'),
+            };
+
+            // -------------------- 工具函数 --------------------
+            function calcOutputSize() {
+                return Math.floor((state.inputSize + 2 * state.padding - state.kernelSize) / state.stride) + 1;
+            }
+
+            function clone2D(a) { return a.map(r => [...r]); }
+
+            function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
+
+            function fmtNum(v) {
+                if (Number.isInteger(v)) return v.toString();
+                return v.toFixed(2).replace(/\.?0+$/, '');
+            }
+
+            function getCellSizes() {
+                const w = window.innerWidth;
+                if (w <= 480) return { input: 26, kernel: 30, output: 26, gap: 2 };
+                if (w <= 640) return { input: 32, kernel: 36, output: 32, gap: 2 };
+                if (w <= 900) return { input: 38, kernel: 42, output: 38, gap: 3 };
+                return { input: 48, kernel: 52, output: 48, gap: 3 };
+            }
+
+            function getCanvasDims() {
+                const s = getCellSizes();
+                state.cellSizeInput = s.input;
+                state.cellSizeKernel = s.kernel;
+                state.cellSizeOutput = s.output;
+                const gap = s.gap;
+                const totalInputCells = state.inputSize + 2 * state.padding;
+                return {
+                    inputPx: Math.max(totalInputCells * s.input + (totalInputCells - 1) * gap, 80),
+                    kernelPx: Math.max(state.kernelSize * s.kernel + (state.kernelSize - 1) * gap, 80),
+                    outputPx: Math.max(state.outputSize * s.output + (state.outputSize - 1) * gap, 80),
+                    gap,
+                    s,
+                };
+            }
+
+            function setupCanvas(canvas, w, h) {
+                const dpr = Math.min(window.devicePixelRatio || 1, 2);
+                canvas.width = w * dpr;
+                canvas.height = h * dpr;
+                canvas.style.width = w + 'px';
+                canvas.style.height = h + 'px';
+                const ctx = canvas.getContext('2d');
+                ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+                return ctx;
+            }
+
+            function cellRect(row, col, cellS, gap) {
+                return { x: col * (cellS + gap), y: row * (cellS + gap), w: cellS, h: cellS };
+            }
+
+            // -------------------- 卷积计算 --------------------
+            function computeSingleOutput(outRow, outCol) {
+                const { inputData, kernelData, kernelSize, stride, padding, inputSize } = state;
+                let sum = 0;
+                for (let kr = 0; kr < kernelSize; kr++)
+                    for (let kc = 0; kc < kernelSize; kc++) {
+                        const ir = outRow * stride + kr - padding;
+                        const ic = outCol * stride + kc - padding;
+                        let iv = 0;
+                        if (ir >= 0 && ir < inputSize && ic >= 0 && ic < inputSize) iv = inputData[ir][ic];
+                        sum += iv * kernelData[kr][kc];
+                    }
+                return sum;
+            }
+
+            function computeAtInputCenter(centerRow, centerCol) {
+                const { inputData, kernelData, kernelSize, inputSize } = state;
+                const half = Math.floor(kernelSize / 2);
+                let sum = 0;
+                for (let kr = 0; kr < kernelSize; kr++)
+                    for (let kc = 0; kc < kernelSize; kc++) {
+                        const ir = centerRow - half + kr;
+                        const ic = centerCol - half + kc;
+                        let iv = 0;
+                        if (ir >= 0 && ir < inputSize && ic >= 0 && ic < inputSize) iv = inputData[ir][ic];
+                        sum += iv * kernelData[kr][kc];
+                    }
+                const outRow = (centerRow - half + state.padding) / state.stride;
+                const outCol = (centerCol - half + state.padding) / state.stride;
+                const hasOutput = (Number.isInteger(outRow) && Number.isInteger(outCol) &&
+                    outRow >= 0 && outRow < state.outputSize && outCol >= 0 && outCol < state.outputSize);
+                return { sum, hasOutput, outputRC: hasOutput ? { row: Math.round(outRow), col: Math.round(outCol) } :
+                        null };
+            }
+
+            function computeFullOutput() {
+                const os = state.outputSize;
+                const od = Array.from({ length: os }, () => Array(os).fill(0));
+                for (let r = 0; r < os; r++)
+                    for (let c = 0; c < os; c++) od[r][c] = computeSingleOutput(r, c);
+                state.outputData = od;
+                return od;
+            }
+
+            function updateOutputSizeState() {
+                state.outputSize = calcOutputSize();
+                state.autoPlayTotal = state.outputSize * state.outputSize;
+                state.autoPlayStep = 0;
+                dom.outputSizeTag.textContent = `${state.outputSize}×${state.outputSize}`;
+                computeFullOutput();
+            }
+
+            // -------------------- Canvas绘制 --------------------
+            function drawInputCanvas(scanRect = null) {
+                const { inputData, inputSize, padding } = state;
+                const ti = inputSize + 2 * padding;
+                const { inputPx, gap, s } = getCanvasDims();
+                const cellS = s.input;
+                const ctx = setupCanvas(dom.inputCanvas, inputPx, inputPx);
+                ctx.fillStyle = '#0a0f1c';
+                ctx.fillRect(0, 0, inputPx, inputPx);
+                for (let r = 0; r < ti; r++)
+                    for (let c = 0; c < ti; c++) {
+                        const rect = cellRect(r, c, cellS, gap);
+                        const isPad = (r < padding || r >= inputSize + padding || c < padding || c >= inputSize +
+                            padding);
+                        let fill;
+                        if (isPad) fill = '#1a1f2b';
+                        else {
+                            const v = inputData[r - padding][c - padding];
+                            fill = v < 10 ? '#0f0f0f' : '#f1f5f9';
+                        }
+                        ctx.fillStyle = fill;
+                        ctx.beginPath();
+                        ctx.roundRect(rect.x, rect.y, rect.w, rect.h, isPad ? 3 : 4);
+                        ctx.fill();
+                        ctx.strokeStyle = isPad ? 'rgba(255,255,255,0.08)' : 'rgba(56,189,248,0.25)';
+                        ctx.lineWidth = 1;
+                        if (isPad) ctx.setLineDash([3, 3]);
+                        else ctx.setLineDash([]);
+                        ctx.beginPath();
+                        ctx.roundRect(rect.x, rect.y, rect.w, rect.h, isPad ? 3 : 4);
+                        ctx.stroke();
+                        ctx.setLineDash([]);
+                        if (!isPad) {
+                            const txt = inputData[r - padding][c - padding] < 10 ? '0' : '255';
+                            ctx.fillStyle = inputData[r - padding][c - padding] < 10 ? '#999' : '#333';
+                            ctx.font =
+                                `bold ${Math.max(cellS*0.2,7)}px ${getComputedStyle(document.body).fontFamily}`;
+                            ctx.textAlign = 'center';
+                            ctx.textBaseline = 'middle';
+                            ctx.fillText(txt, rect.x + rect.w / 2, rect.y + rect.h / 2);
+                        }
+                    }
+                // 绘制扫描区域覆盖框
+                if (scanRect) {
+                    const { rStart, rEnd, cStart, cEnd } = scanRect;
+                    if (rStart >= 0 && cStart >= 0 && rEnd < ti && cEnd < ti) {
+                        const startRect = cellRect(rStart, cStart, cellS, gap);
+                        const endRect = cellRect(rEnd, cEnd, cellS, gap);
+                        const x = startRect.x - 2;
+                        const y = startRect.y - 2;
+                        const w = endRect.x + endRect.w - startRect.x + 4;
+                        const h = endRect.y + endRect.h - startRect.y + 4;
+                        ctx.fillStyle = 'rgba(147,197,253,0.18)';
+                        ctx.fillRect(x, y, w, h);
+                        ctx.strokeStyle = '#93c5fd';
+                        ctx.lineWidth = 2.5;
+                        ctx.shadowColor = 'rgba(147,197,253,0.6)';
+                        ctx.shadowBlur = 10;
+                        ctx.beginPath();
+                        ctx.roundRect(x, y, w, h, 6);
+                        ctx.stroke();
+                        ctx.shadowColor = 'transparent';
+                        ctx.shadowBlur = 0;
+                    }
+                }
+            }
+
+            function drawKernelCanvas() {
+                const { kernelData, kernelSize } = state;
+                const { kernelPx, gap, s } = getCanvasDims();
+                const cellS = s.kernel;
+                const ctx = setupCanvas(dom.kernelCanvas, kernelPx, kernelPx);
+                ctx.fillStyle = '#0a0f1c';
+                ctx.fillRect(0, 0, kernelPx, kernelPx);
+                let ma = 0;
+                for (let r = 0; r < kernelSize; r++)
+                    for (let c = 0; c < kernelSize; c++) ma = Math.max(ma, Math.abs(kernelData[r][c]));
+                if (ma < 0.001) ma = 1;
+                const half = Math.floor(kernelSize / 2);
+                for (let r = 0; r < kernelSize; r++)
+                    for (let c = 0; c < kernelSize; c++) {
+                        const rect = cellRect(r, c, cellS, gap);
+                        const kv = kernelData[r][c];
+                        const inten = Math.abs(kv) / ma;
+                        let fill;
+                        if (kv > 0.0005) fill = `rgba(167,139,250,${0.18+inten*0.6})`;
+                        else if (kv < -0.0005) fill = `rgba(100,90,220,${0.18+inten*0.55})`;
+                        else fill = 'rgba(30,36,50,0.75)';
+                        ctx.fillStyle = fill;
+                        ctx.beginPath();
+                        ctx.roundRect(rect.x, rect.y, rect.w, rect.h, 5);
+                        ctx.fill();
+                        ctx.strokeStyle = (r === half && c === half) ? 'rgba(147,197,253,0.5)' :
+                            'rgba(167,139,250,0.3)';
+                        ctx.lineWidth = (r === half && c === half) ? 1.8 : 1;
+                        ctx.beginPath();
+                        ctx.roundRect(rect.x, rect.y, rect.w, rect.h, 5);
+                        ctx.stroke();
+                        ctx.fillStyle = '#fff';
+                        ctx.font =
+                            `bold ${Math.max(cellS*0.18,6.5)}px ${getComputedStyle(document.body).fontFamily}`;
+                        ctx.textAlign = 'center';
+                        ctx.textBaseline = 'middle';
+                        ctx.fillText(fmtNum(kv), rect.x + rect.w / 2, rect.y + rect.h / 2);
+                    }
+            }
+
+            function drawOutputCanvas(highlightRC = null) {
+                const { outputData, outputSize } = state;
+                const { outputPx, gap, s } = getCanvasDims();
+                const cellS = s.output;
+                const ctx = setupCanvas(dom.outputCanvas, outputPx, outputPx);
+                ctx.fillStyle = '#0a0f1c';
+                ctx.fillRect(0, 0, outputPx, outputPx);
+                const av = outputData.flat();
+                let mn = Math.min(...av),
+                    mx = Math.max(...av);
+                if (mx - mn < 0.001) { mn = 0;
+                    mx = 255; }
+                const range = mx - mn;
+                for (let r = 0; r < outputSize; r++)
+                    for (let c = 0; c < outputSize; c++) {
+                        const rect = cellRect(r, c, cellS, gap);
+                        const raw = outputData[r][c];
+                        const gray = clamp(Math.round(((raw - mn) / range) * 255), 0, 255);
+                        const b = Math.round(100 + (gray / 255) * 155);
+                        const g = Math.round(120 + (gray / 255) * 135);
+                        const rCol = Math.round(30 + (gray / 255) * 225);
+                        ctx.fillStyle = `rgb(${rCol},${g},${b})`;
+                        ctx.beginPath();
+                        ctx.roundRect(rect.x, rect.y, rect.w, rect.h, 4);
+                        ctx.fill();
+                        ctx.strokeStyle = 'rgba(147,197,253,0.25)';
+                        ctx.lineWidth = 1;
+                        ctx.beginPath();
+                        ctx.roundRect(rect.x, rect.y, rect.w, rect.h, 4);
+                        ctx.stroke();
+                        ctx.fillStyle = gray > 140 ? '#0f172a' : '#fff';
+                        ctx.font =
+                            `bold ${Math.max(cellS*0.2,7)}px ${getComputedStyle(document.body).fontFamily}`;
+                        ctx.textAlign = 'center';
+                        ctx.textBaseline = 'middle';
+                        ctx.fillText(fmtNum(raw), rect.x + rect.w / 2, rect.y + rect.h / 2);
+                    }
+                // 高亮当前输出单元格
+                if (highlightRC) {
+                    const { row, col } = highlightRC;
+                    if (row >= 0 && row < outputSize && col >= 0 && col < outputSize) {
+                        const rect = cellRect(row, col, cellS, gap);
+                        ctx.strokeStyle = '#93c5fd';
+                        ctx.lineWidth = 3;
+                        ctx.shadowColor = 'rgba(147,197,253,0.7)';
+                        ctx.shadowBlur = 12;
+                        ctx.beginPath();
+                        ctx.roundRect(rect.x - 2, rect.y - 2, rect.w + 4, rect.h + 4, 6);
+                        ctx.stroke();
+                        ctx.shadowColor = 'transparent';
+                        ctx.shadowBlur = 0;
+                    }
+                }
+            }
+
+            function renderAll(scanRect = null, highlightOutput = null) {
+                drawInputCanvas(scanRect);
+                drawKernelCanvas();
+                drawOutputCanvas(highlightOutput);
+            }
+
+            // -------------------- 结果面板更新 --------------------
+            function showResult(value, positionText = '') {
+                dom.resultValue.textContent = fmtNum(value);
+                dom.resultPosition.textContent = positionText;
+            }
+
+            function clearResult() {
+                dom.resultValue.textContent = '—';
+                dom.resultPosition.textContent = '';
+            }
+
+            // -------------------- 坐标转换辅助 --------------------
+            function getScanRectFromInputCenter(dataRow, dataCol) {
+                const { kernelSize, padding, inputSize } = state;
+                const half = Math.floor(kernelSize / 2);
+                const rStart = dataRow - half + padding;
+                const cStart = dataCol - half + padding;
+                const rEnd = rStart + kernelSize - 1;
+                const cEnd = cStart + kernelSize - 1;
+                const totalCells = inputSize + 2 * padding;
+                return {
+                    rStart: clamp(rStart, 0, totalCells - 1),
+                    rEnd: clamp(rEnd, 0, totalCells - 1),
+                    cStart: clamp(cStart, 0, totalCells - 1),
+                    cEnd: clamp(cEnd, 0, totalCells - 1),
+                };
+            }
+
+            function getScanRectFromOutput(outRow, outCol) {
+                const { kernelSize, stride, padding, inputSize } = state;
+                const rStart = outRow * stride;
+                const cStart = outCol * stride;
+                const rEnd = rStart + kernelSize - 1;
+                const cEnd = cStart + kernelSize - 1;
+                const totalCells = inputSize + 2 * padding;
+                return {
+                    rStart: clamp(rStart, 0, totalCells - 1),
+                    rEnd: clamp(rEnd, 0, totalCells - 1),
+                    cStart: clamp(cStart, 0, totalCells - 1),
+                    cEnd: clamp(cEnd, 0, totalCells - 1),
+                };
+            }
+
+            // -------------------- 事件处理 --------------------
+            function getInputCell(e) {
+                const rect = dom.inputCanvas.getBoundingClientRect();
+                const x = e.clientX - rect.left,
+                    y = e.clientY - rect.top;
+                const totalCells = state.inputSize + 2 * state.padding;
+                const { inputPx, gap, s } = getCanvasDims();
+                const step = s.input + gap;
+                const col = Math.floor(x / step),
+                    row = Math.floor(y / step);
+                if (col < 0 || col >= totalCells || row < 0 || row >= totalCells) return null;
+                const rx = x - col * step,
+                    ry = y - row * step;
+                if (rx < 0 || rx > s.input || ry < 0 || ry > s.input) return null;
+                const isPad = (row < state.padding || row >= state.inputSize + state.padding || col < state.padding ||
+                    col >= state.inputSize + state.padding);
+                return { row, col, isPad, dataRow: row - state.padding, dataCol: col - state.padding };
+            }
+
+            function getOutputCell(e) {
+                const rect = dom.outputCanvas.getBoundingClientRect();
+                const x = e.clientX - rect.left,
+                    y = e.clientY - rect.top;
+                const { outputPx, gap, s } = getCanvasDims();
+                const step = s.output + gap;
+                const col = Math.floor(x / step),
+                    row = Math.floor(y / step);
+                if (col < 0 || col >= state.outputSize || row < 0 || row >= state.outputSize) return null;
+                const rx = x - col * step,
+                    ry = y - row * step;
+                if (rx < 0 || rx > s.output || ry < 0 || ry > s.output) return null;
+                return { row, col };
+            }
+
+            function onInputMove(e) {
+                if (state.isAutoPlaying) return;
+                const cell = getInputCell(e);
+                if (cell && !cell.isPad) {
+                    if (!state.hoveredInputRC || state.hoveredInputRC.row !== cell.dataRow || state.hoveredInputRC
+                        .col !== cell.dataCol) {
+                        state.hoveredInputRC = { row: cell.dataRow, col: cell.dataCol };
+                        state.hoveredOutputRC = null;
+                        const scanRect = getScanRectFromInputCenter(cell.dataRow, cell.dataCol);
+                        const { sum, hasOutput, outputRC } = computeAtInputCenter(cell.dataRow, cell.dataCol);
+                        const posText = hasOutput && outputRC ?
+                            ` → 特征图 [${outputRC.row},${outputRC.col}]` : '';
+                        showResult(sum, posText);
+                        renderAll(scanRect, outputRC);
+                    }
+                } else if (!cell && state.hoveredInputRC) {
+                    state.hoveredInputRC = null;
+                    clearResult();
+                    renderAll(null, null);
+                }
+            }
+
+            function onInputLeave() {
+                if (state.isAutoPlaying) return;
+                state.hoveredInputRC = null;
+                clearResult();
+                renderAll(null, null);
+            }
+
+            function onOutputMove(e) {
+                if (state.isAutoPlaying) return;
+                const cell = getOutputCell(e);
+                if (cell) {
+                    if (!state.hoveredOutputRC || state.hoveredOutputRC.row !== cell.row || state.hoveredOutputRC
+                        .col !== cell.col) {
+                        state.hoveredOutputRC = { row: cell.row, col: cell.col };
+                        state.hoveredInputRC = null;
+                        const scanRect = getScanRectFromOutput(cell.row, cell.col);
+                        const value = state.outputData[cell.row][cell.col];
+                        showResult(value, `特征图 [${cell.row},${cell.col}]`);
+                        renderAll(scanRect, cell);
+                    }
+                } else if (!cell && state.hoveredOutputRC) {
+                    state.hoveredOutputRC = null;
+                    clearResult();
+                    renderAll(null, null);
+                }
+            }
+
+            function onOutputLeave() {
+                if (state.isAutoPlaying) return;
+                state.hoveredOutputRC = null;
+                clearResult();
+                renderAll(null, null);
+            }
+
+            // -------------------- 自动扫描 --------------------
+            function startAutoPlay() {
+                if (state.isAutoPlaying) return;
+                state.isAutoPlaying = true;
+                state.autoPlayStep = 0;
+                state.autoPlayTotal = state.outputSize * state.outputSize;
+                state.hoveredInputRC = null;
+                state.hoveredOutputRC = null;
+                updatePlayBtn(true);
+                scheduleNextStep();
+            }
+
+            function stopAutoPlay() {
+                state.isAutoPlaying = false;
+                if (state.autoPlayTimer) { clearTimeout(state.autoPlayTimer);
+                    state.autoPlayTimer = null; }
+                updatePlayBtn(false);
+                state.hoveredOutputRC = null;
+                clearResult();
+                renderAll(null, null);
+            }
+
+            function toggleAutoPlay() { state.isAutoPlaying ? stopAutoPlay() : startAutoPlay(); }
+
+            function scheduleNextStep() {
+                if (!state.isAutoPlaying) return;
+                const step = state.autoPlayStep;
+                const total = state.autoPlayTotal;
+                const os = state.outputSize;
+                if (step >= total) { stopAutoPlay();
+                    renderAll(null, null);
+                    clearResult(); return; }
+                const outRow = Math.floor(step / os),
+                    outCol = step % os;
+                state.hoveredOutputRC = { row: outRow, col: outCol };
+                const scanRect = getScanRectFromOutput(outRow, outCol);
+                const value = state.outputData[outRow][outCol];
+                showResult(value, `特征图 [${outRow},${outCol}]`);
+                renderAll(scanRect, { row: outRow, col: outCol });
+                state.autoPlayStep++;
+                dom.playLabel.textContent = `扫描中 ${state.autoPlayStep}/${total}`;
+                state.autoPlayTimer = setTimeout(() => scheduleNextStep(), state.animSpeed);
+            }
+
+            function updatePlayBtn(playing) {
+                const btn = dom.autoPlayBtn;
+                if (playing) {
+                    btn.classList.add('is-playing');
+                    dom.playIcon.textContent = '⏸';
+                    dom.playLabel.textContent = `扫描中 ${state.autoPlayStep}/${state.autoPlayTotal}`;
+                } else {
+                    btn.classList.remove('is-playing');
+                    dom.playIcon.textContent = '▶';
+                    dom.playLabel.textContent = '自动扫描';
+                }
+            }
+
+            function singleStep() {
+                if (state.isAutoPlaying) { stopAutoPlay(); return; }
+                if (state.autoPlayStep >= state.autoPlayTotal) state.autoPlayStep = 0;
+                const os = state.outputSize;
+                const step = state.autoPlayStep;
+                const outRow = Math.floor(step / os),
+                    outCol = step % os;
+                state.hoveredOutputRC = { row: outRow, col: outCol };
+                const scanRect = getScanRectFromOutput(outRow, outCol);
+                const value = state.outputData[outRow][outCol];
+                showResult(value, `特征图 [${outRow},${outCol}]`);
+                renderAll(scanRect, { row: outRow, col: outCol });
+                state.autoPlayStep++;
+                if (state.autoPlayStep >= state.autoPlayTotal) {
+                    setTimeout(() => {
+                        state.hoveredOutputRC = null;
+                        clearResult();
+                        renderAll(null, null);
+                    }, 900);
+                }
+            }
+
+            // -------------------- 参数调节 --------------------
+            function changeStride(d) {
+                const ns = state.stride + d;
+                if (ns < 1 || ns > state.kernelSize) return;
+                if (Math.floor((state.inputSize + 2 * state.padding - state.kernelSize) / ns) + 1 < 1) return;
+                state.stride = ns;
+                dom.strideValue.textContent = ns;
+                updateOutputSizeState();
+                renderAll(null, null);
+                clearResult();
+            }
+
+            function changePadding(d) {
+                const np = state.padding + d;
+                if (np < 0 || np > 3) return;
+                if (Math.floor((state.inputSize + 2 * np - state.kernelSize) / state.stride) + 1 < 1) return;
+                state.padding = np;
+                dom.paddingValue.textContent = np;
+                dom.inputSizeTag.textContent = `${state.inputSize}×${state.inputSize}` + (np > 0 ? ` (+${np})` : '');
+                updateOutputSizeState();
+                renderAll(null, null);
+                clearResult();
+            }
+
+            function setKernelSize(ns) {
+                if (state.kernelSize === ns) return;
+                if (state.isAutoPlaying) stopAutoPlay();
+                state.kernelSize = ns;
+                if (state.stride > ns) state.stride = 1;
+                dom.strideValue.textContent = state.stride;
+                const name = state.activeKernelPreset;
+                const src = ns === 3 ? kernelPresets3 : kernelPresets5;
+                state.kernelData = clone2D(src[name] ? src[name].data : src['verticalEdge'].data);
+                dom.kernelHint.textContent = src[name] ? src[name].hint : src['verticalEdge'].hint;
+                dom.kernelSizeTag.textContent = `${ns}×${ns}`;
+                if (ns === 3) {
+                    dom.kernelSize3Btn.classList.add('active');
+                    dom.kernelSize3Btn.style.background = 'var(--purple)';
+                    dom.kernelSize3Btn.style.color = '#fff';
+                    dom.kernelSize5Btn.classList.remove('active');
+                    dom.kernelSize5Btn.style.background = '';
+                    dom.kernelSize5Btn.style.color = '';
+                } else {
+                    dom.kernelSize5Btn.classList.add('active');
+                    dom.kernelSize5Btn.style.background = 'var(--purple)';
+                    dom.kernelSize5Btn.style.color = '#fff';
+                    dom.kernelSize3Btn.classList.remove('active');
+                    dom.kernelSize3Btn.style.background = '';
+                    dom.kernelSize3Btn.style.color = '';
+                }
+                updateOutputSizeState();
+                renderAll(null, null);
+                clearResult();
+                highlightActivePreset(state.activeKernelPreset);
+            }
+
+            function applyKernelPreset(name) {
+                if (state.isAutoPlaying) stopAutoPlay();
+                const src = state.kernelSize === 3 ? kernelPresets3 : kernelPresets5;
+                if (src[name]) {
+                    state.kernelData = clone2D(src[name].data);
+                    state.activeKernelPreset = name;
+                    dom.kernelHint.textContent = src[name].hint;
+                    updateOutputSizeState();
+                    renderAll(null, null);
+                    clearResult();
+                    highlightActivePreset(name);
+                }
+            }
+
+            function highlightActivePreset(name) {
+                document.querySelectorAll('[data-preset]').forEach(b => b.classList.toggle('active', b.dataset
+                    .preset === name));
+            }
+
+            function resetAll() {
+                if (state.isAutoPlaying) stopAutoPlay();
+                state.inputData = clone2D(presetDigit7);
+                state.kernelSize = 3;
+                state.kernelData = clone2D(kernelPresets3['verticalEdge'].data);
+                state.stride = 1;
+                state.padding = 0;
+                state.animSpeed = 420;
+                state.activeKernelPreset = 'verticalEdge';
+                state.hoveredInputRC = null;
+                state.hoveredOutputRC = null;
+                dom.strideValue.textContent = '1';
+                dom.paddingValue.textContent = '0';
+                dom.speedSlider.value = 420;
+                dom.speedLabel.textContent = '420ms';
+                dom.kernelSizeTag.textContent = '3×3';
+                dom.inputSizeTag.textContent = '8×8';
+                dom.kernelHint.textContent = kernelPresets3['verticalEdge'].hint;
+                dom.kernelSize3Btn.classList.add('active');
+                dom.kernelSize3Btn.style.background = 'var(--purple)';
+                dom.kernelSize3Btn.style.color = '#fff';
+                dom.kernelSize5Btn.classList.remove('active');
+                dom.kernelSize5Btn.style.background = '';
+                dom.kernelSize5Btn.style.color = '';
+                updateOutputSizeState();
+                renderAll(null, null);
+                clearResult();
+                updatePlayBtn(false);
+                highlightActivePreset('verticalEdge');
+            }
+
+            // -------------------- 事件绑定 --------------------
+            function setupEvents() {
+                dom.inputCanvas.addEventListener('mousemove', onInputMove);
+                dom.inputCanvas.addEventListener('mouseleave', onInputLeave);
+                dom.inputCanvas.addEventListener('click', (e) => {
+                    if (state.isAutoPlaying) return;
+                    const cell = getInputCell(e);
+                    if (cell && !cell.isPad) {
+                        state.hoveredInputRC = { row: cell.dataRow, col: cell.dataCol };
+                        state.hoveredOutputRC = null;
+                        const scanRect = getScanRectFromInputCenter(cell.dataRow, cell.dataCol);
+                        const { sum, hasOutput, outputRC } = computeAtInputCenter(cell.dataRow, cell.dataCol);
+                        const posText = hasOutput && outputRC ?
+                            ` → 特征图 [${outputRC.row},${outputRC.col}]` : '';
+                        showResult(sum, posText);
+                        renderAll(scanRect, outputRC);
+                    }
+                });
+                dom.outputCanvas.addEventListener('mousemove', onOutputMove);
+                dom.outputCanvas.addEventListener('mouseleave', onOutputLeave);
+                dom.outputCanvas.addEventListener('click', (e) => {
+                    if (state.isAutoPlaying) return;
+                    const cell = getOutputCell(e);
+                    if (cell) {
+                        state.hoveredOutputRC = { row: cell.row, col: cell.col };
+                        const scanRect = getScanRectFromOutput(cell.row, cell.col);
+                        showResult(state.outputData[cell.row][cell.col], `特征图 [${cell.row},${cell.col}]`);
+                        renderAll(scanRect, cell);
+                    }
+                });
+
+                document.getElementById('strideMinus').addEventListener('click', () => changeStride(-1));
+                document.getElementById('stridePlus').addEventListener('click', () => changeStride(1));
+                document.getElementById('paddingMinus').addEventListener('click', () => changePadding(-1));
+                document.getElementById('paddingPlus').addEventListener('click', () => changePadding(1));
+                dom.speedSlider.addEventListener('input', () => {
+                    state.animSpeed = parseInt(dom.speedSlider.value);
+                    dom.speedLabel.textContent = state.animSpeed + 'ms';
+                });
+                dom.autoPlayBtn.addEventListener('click', toggleAutoPlay);
+                dom.stepBtn.addEventListener('click', singleStep);
+                dom.resetBtn.addEventListener('click', resetAll);
+                dom.kernelSize3Btn.addEventListener('click', () => setKernelSize(3));
+                dom.kernelSize5Btn.addEventListener('click', () => setKernelSize(5));
+                document.querySelectorAll('[data-preset]').forEach(b => b.addEventListener('click', () =>
+                    applyKernelPreset(b.dataset.preset)));
+
+                document.addEventListener('keydown', (e) => {
+                    if (e.target.closest('input')) return;
+                    if (e.key === ' ' || e.code === 'Space') { e.preventDefault();
+                        toggleAutoPlay(); }
+                    if (e.key === 'ArrowRight') { e.preventDefault();
+                        singleStep(); }
+                    if ((e.key === 'r' || e.key === 'R') && (e.ctrlKey || e.metaKey)) { e.preventDefault();
+                        resetAll(); }
+                });
+                window.addEventListener('resize', () => {
+                    let scanRect = null,
+                        outputRC = null;
+                    if (state.hoveredInputRC) {
+                        scanRect = getScanRectFromInputCenter(state.hoveredInputRC.row, state.hoveredInputRC
+                            .col);
+                        const calc = computeAtInputCenter(state.hoveredInputRC.row, state.hoveredInputRC.col);
+                        outputRC = calc.outputRC;
+                    } else if (state.hoveredOutputRC) {
+                        scanRect = getScanRectFromOutput(state.hoveredOutputRC.row, state.hoveredOutputRC.col);
+                        outputRC = state.hoveredOutputRC;
+                    }
+                    renderAll(scanRect, outputRC);
+                });
+            }
+
+            // -------------------- 初始化 --------------------
+            function init() {
+                state.inputData = clone2D(presetDigit7);
+                state.kernelData = clone2D(kernelPresets3['verticalEdge'].data);
+                state.activeKernelPreset = 'verticalEdge';
+                state.outputSize = calcOutputSize();
+                state.autoPlayTotal = state.outputSize * state.outputSize;
+                computeFullOutput();
+
+                dom.strideValue.textContent = '1';
+                dom.paddingValue.textContent = '0';
+                dom.speedSlider.value = 420;
+                dom.speedLabel.textContent = '420ms';
+                dom.kernelSizeTag.textContent = '3×3';
+                dom.inputSizeTag.textContent = '8×8';
+                dom.outputSizeTag.textContent = `${state.outputSize}×${state.outputSize}`;
+                dom.kernelHint.textContent = kernelPresets3['verticalEdge'].hint;
+                highlightActivePreset('verticalEdge');
+
+                renderAll(null, null);
+                setupEvents();
+            }
+            init();
+        })();
+    </script>
+</body>
+</html>
